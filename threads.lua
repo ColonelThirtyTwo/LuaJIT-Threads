@@ -4,49 +4,46 @@ local ffi = require "ffi"
 local C = ffi.C
 local threadslib = ffi.load("luajitthreads")
 local uint32_b = ffi.typeof("uint32_t[1]")
+local int_b = ffi.typeof("int[1]")
 local str_b = ffi.typeof("char[?]")
 
 local Threading = {}
 
+-- Unique value representing a function timed out
+Threading.TIMEOUT = setmetatable({}, {__tostring=function() return "Threading.TIMEOUT" end})
+
 -- -----------------------------------------------------------------------------------------------------------------
 -- Lua API
+
 ffi.cdef[[
 	static const int LUA_REGISTRYINDEX  = -10000;
 	static const int LUA_ENVIRONINDEX   = -10001;
 	static const int LUA_GLOBALSINDEX   = -10002;
-
+	
 	typedef struct lua_State lua_State;
 	typedef double lua_Number;
 	typedef ptrdiff_t lua_Integer;
-	typedef int (*lua_CFunction) (lua_State *L);
 	
-	lua_State *(luaL_newstate) (void);
+	lua_State* luaL_newstate(void);
 	void luaL_openlibs(lua_State *L);
 	void lua_close (lua_State *L);
-	void  (lua_call) (lua_State *L, int nargs, int nresults);
-	
-	void  (lua_pushnil) (lua_State *L);
-	void  (lua_pushnumber) (lua_State *L, lua_Number n);
-	void  (lua_pushinteger) (lua_State *L, lua_Integer n);
-	void  (lua_pushlstring) (lua_State *L, const char *s, size_t l);
-	void  (lua_pushstring) (lua_State *L, const char *s);
-	//const char *(lua_pushvfstring) (lua_State *L, const char *fmt, va_list argp);
-	//const char *(lua_pushfstring) (lua_State *L, const char *fmt, ...);
-	void  (lua_pushcclosure) (lua_State *L, lua_CFunction fn, int n);
-	void  (lua_pushboolean) (lua_State *L, int b);
-	void  (lua_pushlightuserdata) (lua_State *L, void *p);
-	int   (lua_pushthread) (lua_State *L);
-
-	void  (lua_gettable) (lua_State *L, int idx);
-	void  (lua_getfield) (lua_State *L, int idx, const char *k);
-	void  (lua_rawget) (lua_State *L, int idx);
-	void  (lua_rawgeti) (lua_State *L, int idx, int n);
-	void  (lua_createtable) (lua_State *L, int narr, int nrec);
-	void *(lua_newuserdata) (lua_State *L, size_t sz);
-	int   (lua_getmetatable) (lua_State *L, int objindex);
-	void  (lua_getfenv) (lua_State *L, int idx);
-	
+	void lua_call(lua_State *L, int nargs, int nresults);
 	void luaL_checkstack (lua_State *L, int sz, const char *msg);
+	
+	void  lua_pushnil (lua_State *L);
+	void  lua_pushnumber (lua_State *L, lua_Number n);
+	void  lua_pushinteger (lua_State *L, lua_Integer n);
+	void  lua_pushlstring (lua_State *L, const char *s, size_t l);
+	void  lua_pushstring (lua_State *L, const char *s);
+	void  lua_pushboolean (lua_State *L, int b);
+	void  lua_pushlightuserdata (lua_State *L, void *p);
+	
+	void lua_gettable (lua_State *L, int idx);
+	void lua_getfield (lua_State *L, int idx, const char *k);
+	void lua_rawget (lua_State *L, int idx);
+	void lua_rawgeti (lua_State *L, int idx, int n);
+	lua_Integer lua_tointeger (lua_State *L, int index);
+	const char *lua_tolstring (lua_State *L, int index, size_t *len);
 ]]
 
 -- -----------------------------------------------------------------------------------------------------------------
@@ -84,7 +81,7 @@ if ffi.os == "Windows" then
 		static const int WAIT_TIMEOUT = 0x00000102;
 		static const int WAIT_FAILED = 0xFFFFFFFF;
 		static const int INFINITE = 0xFFFFFFFF;
-	
+		
 		typedef uint32_t (__stdcall *ThreadProc)(void*);
 		void* CreateThread(
 			void* lpThreadAttributes,
@@ -180,7 +177,7 @@ end
 -- Thread API
 
 local xpcall_debug_hook_dump = string.dump(function(err)
-	return debug.traceback(tostring(err) or "<nonstring error>", 3)
+	return debug.traceback(tostring(err) or "<nonstring error>", 2)
 end)
 
 --- Creates a new thread and starts it.
@@ -226,16 +223,23 @@ Thread.__gc = Thread.destroy
 
 --- Waits for the thread to terminate, or after the timeout has passed
 -- @param timeout Number of seconds to wait. nil = no timeout
--- @return True if the thread has terminated, false if timed out
+-- @return True if the thread exited successfully. Otherwise it returns
+-- false and the error message. If the error message is the value in
+-- Threading.TIMEOUT, then the function exited because the timeout
+-- was elapsed
 function Thread:join(timeout)
 	if self.thread == nil then error("invalid thread",2) end
-	return raw_thread_join(self.thread, timeout)
-end
-
---- Returns true if the thread is running, false if not
-function Thread:running()
-	if self.thread == nil then return false end
-	return raw_thread_running(self.thread)
+	if raw_thread_join(self.thread) then
+		local r = C.lua_tointeger(self.state, -1)
+		if r ~= 0 then
+			local len_b = int_b()
+			local str = C.lua_tolstring(self.state, -2, len_b)
+			return false, ffi.string(str, len_b[0])
+		end
+		return true
+	else
+		return false, Threading.TIMEOUT
+	end
 end
 
 thread_t = ffi.metatype(thread_t, Thread)
