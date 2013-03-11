@@ -1,24 +1,24 @@
 
 local Threading = require "threads"
 
-local threads = {}
+local function testThread(c, f, ...)
+	local thread = Threading.Thread(f, ...)
+	local ok, err = thread:join()
+	if ok then
+		print("Thread "..c.." ran successfully")
+	else
+		print("Thread "..c.." terminated with error: "..tostring(err))
+	end
+	thread:destroy()
+end
+	
 
-threads[1] = Threading.Thread(function()
+testThread(1, function()
 	print("Thread 1 says hi!")
 end)
-threads[2] = Threading.Thread(function()
+testThread(2, function()
 	error("Thread 2 has errors.")
 end)
-
-local l = #threads
-for i=1,l do
-	local ok, err = threads[i]:join()
-	if ok then
-		print("Thread "..tostring(i).." terminated successfully")
-	else
-		print("Thread "..tostring(i).." terminated with error: "..tostring(err))
-	end
-	
-	threads[i]:destroy()
-	threads[i] = nil
-end
+testThread(3, function(...)
+	print("Got values:",...)
+end, nil, 2, "c", true)

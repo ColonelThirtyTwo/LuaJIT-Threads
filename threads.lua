@@ -13,12 +13,23 @@ local Threading = {}
 Threading.TIMEOUT = setmetatable({}, {__tostring=function() return "Threading.TIMEOUT" end})
 
 -- -----------------------------------------------------------------------------------------------------------------
--- Lua API
+-- Lua API & Helper functions
 
 ffi.cdef[[
 	static const int LUA_REGISTRYINDEX  = -10000;
 	static const int LUA_ENVIRONINDEX   = -10001;
 	static const int LUA_GLOBALSINDEX   = -10002;
+	
+	static const int LUA_TNONE         = -1;
+	static const int LUA_TNIL          =  0;
+	static const int LUA_TBOOLEAN      =  1;
+	static const int LUA_TLIGHTUSERDAT =  2;
+	static const int LUA_TNUMBER       =  3;
+	static const int LUA_TSTRING       =  4;
+	static const int LUA_TTABLE        =  5;
+	static const int LUA_TFUNCTION     =  6;
+	static const int LUA_TUSERDATA     =  7;
+	static const int LUA_TTHREAD       =  8;
 	
 	typedef struct lua_State lua_State;
 	typedef double lua_Number;
@@ -28,7 +39,9 @@ ffi.cdef[[
 	void luaL_openlibs(lua_State *L);
 	void lua_close (lua_State *L);
 	void lua_call(lua_State *L, int nargs, int nresults);
-	void luaL_checkstack (lua_State *L, int sz, const char *msg);
+	void lua_checkstack (lua_State *L, int sz);
+	void lua_settop (lua_State *L, int index);
+	int lua_type (lua_State *L, int index);
 	
 	void  lua_pushnil (lua_State *L);
 	void  lua_pushnumber (lua_State *L, lua_Number n);
@@ -45,6 +58,35 @@ ffi.cdef[[
 	lua_Integer lua_tointeger (lua_State *L, int index);
 	const char *lua_tolstring (lua_State *L, int index, size_t *len);
 ]]
+
+local xpcall_debug_hook_dump = string.dump(function(err)
+	return debug.traceback(tostring(err) or "<nonstring error>", 2)
+end)
+
+local moveValues_typeconverters = {
+	["number"]  = function(L,v) C.lua_pushnumber(L,v) end,
+	["string"]  = function(L,v) C.lua_pushlstring(L,v,#v) end,
+	["nil"]     = function(L,v) C.lua_pushnil(L) end,
+	["boolean"] = function(L,v) C.lua_pushboolean(L,v) end,
+}
+
+-- Copies values into a lua state
+local function moveValues(L, ...)
+	local n = select("#", ...)
+	
+	if C.lua_checkstack(L, n) == 0 then
+		error("out of memory")
+	end
+	
+	for i=1,n do
+		local v = select(i, ...)
+		local conv = moveValues_typeconverters[type(v)]
+		if not conv then
+			error("Cannot pass argument "..(i+1).." into thread: type "..type(v).." not supported")
+		end
+		conv(L, v)
+	end
+end
 
 -- -----------------------------------------------------------------------------------------------------------------
 -- Thread structures and abstractions
@@ -176,38 +218,46 @@ end
 -- -----------------------------------------------------------------------------------------------------------------
 -- Thread API
 
-local xpcall_debug_hook_dump = string.dump(function(err)
-	return debug.traceback(tostring(err) or "<nonstring error>", 2)
-end)
-
 --- Creates a new thread and starts it.
--- @param func Function to run. This will be serialized with string.dump, so all upvalues will be set to nil.
-function Thread:__new(func)
+-- @param func Function to run. This will be serialized with string.dump.
+-- @param ... Values to pass to func when the thread starts. Acceptable types are nil, number, string, and boolean
+function Thread:__new(func, ...)
+	local funcd = string.dump(func)
+	
 	local t = ffi.new(self)
-	t.state = C.luaL_newstate()
-	if t.state == nil then
+	local L = C.luaL_newstate()
+	if L == nil then
 		error("Could not allocate new state",2)
 	end
+	t.state = L
 	
-	C.luaL_openlibs(t.state)
+	C.luaL_openlibs(L)
+	C.lua_settop(L,0)
 	
-	local funcd = string.dump(func)
-	C.luaL_checkstack(t.state, 3, "out of memory")
+	if C.lua_checkstack(L, 3) == 0 then
+		error("out of memory")
+	end
 	
-	C.lua_getfield(t.state, C.LUA_GLOBALSINDEX, "loadstring")
-	C.lua_pushlstring(t.state, xpcall_debug_hook_dump, #xpcall_debug_hook_dump)
-	C.lua_call(t.state,1,1)
+	-- Load pcall hook
+	C.lua_getfield(L, C.LUA_GLOBALSINDEX, "loadstring")
+	C.lua_pushlstring(L, xpcall_debug_hook_dump, #xpcall_debug_hook_dump)
+	C.lua_call(L,1,1)
 	
-	C.lua_getfield(t.state, C.LUA_GLOBALSINDEX, "loadstring")
-	C.lua_pushlstring(t.state, funcd, #funcd)
-	C.lua_call(t.state,1,1)
+	-- Load main function
+	C.lua_getfield(L, C.LUA_GLOBALSINDEX, "loadstring")
+	C.lua_pushlstring(L, funcd, #funcd)
+	C.lua_call(L,1,1)
+	
+	-- Copy arguments
+	moveValues(L,...)
 	
 	t.thread = raw_thread_create(t.state)
 	return t
 end
 
---- Terminates and destroys the thread.
--- Note that terminating the thread is pretty dangerous.
+--- Terminates the thread if it hasn't exited already and destroys it.
+-- Note that terminating threads is dangerous (Google around for more info)
+-- and it is preferred to just return from the threads main method.
 function Thread:destroy()
 	if self.thread ~= nil then
 		raw_thread_destroy(self.thread)
