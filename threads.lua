@@ -68,6 +68,7 @@ local moveValues_typeconverters = {
 	["string"]  = function(L,v) C.lua_pushlstring(L,v,#v) end,
 	["nil"]     = function(L,v) C.lua_pushnil(L) end,
 	["boolean"] = function(L,v) C.lua_pushboolean(L,v) end,
+	["cdata"]   = function(L,v) C.lua_pushlightuserdata(L,v) end,
 }
 
 -- Copies values into a lua state
@@ -220,7 +221,9 @@ end
 
 --- Creates a new thread and starts it.
 -- @param func Function to run. This will be serialized with string.dump.
--- @param ... Values to pass to func when the thread starts. Acceptable types are nil, number, string, and boolean
+-- @param ... Values to pass to func when the thread starts. Acceptable types
+-- are nil, number, string, boolean, and cdata (which are converted into void*
+-- lightuserdata which you must cast in the thread function)
 function Thread:__new(func, ...)
 	local funcd = string.dump(func)
 	

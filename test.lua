@@ -1,4 +1,5 @@
 
+local ffi = require "ffi"
 local Threading = require "threads"
 
 local function testThread(c, f, ...)
@@ -22,3 +23,10 @@ end)
 testThread(3, function(...)
 	print("Got values:",...)
 end, nil, 2, "c", true)
+
+local vec = ffi.new("struct {int x, y, z;}", 100,200,300)
+testThread(4, function(v)
+	local ffi = require "ffi"
+	v = ffi.cast("struct {int x,y,z;}*", v)
+	print(v.x, v.y, v.z)
+end, vec)
