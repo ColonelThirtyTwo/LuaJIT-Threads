@@ -60,7 +60,7 @@ ffi.cdef[[
 ]]
 
 local xpcall_debug_hook_dump = string.dump(function(err)
-	return debug.traceback(tostring(err) or "<nonstring error>", 2)
+	return debug.traceback(tostring(err) or "<nonstring error>")
 end)
 
 local moveValues_typeconverters = {
@@ -83,7 +83,7 @@ local function moveValues(L, ...)
 		local v = select(i, ...)
 		local conv = moveValues_typeconverters[type(v)]
 		if not conv then
-			error("Cannot pass argument "..(i+1).." into thread: type "..type(v).." not supported")
+			error("Cannot pass argument "..i.." into thread: type "..type(v).." not supported")
 		end
 		conv(L, v)
 	end
@@ -92,17 +92,21 @@ end
 -- -----------------------------------------------------------------------------------------------------------------
 -- Thread structures and abstractions
 
+local Thread = {}
+Thread.__index = Thread
+local thread_t
 local raw_thread_create
 local raw_thread_destroy
 local raw_thread_running
 local raw_thread_join
 
-local Thread = {}
-Thread.__index = Thread
-local thread_t = ffi.typeof[[struct {
-	lua_State* state;
-	void* thread;
-}]]
+local Mutex = {}
+Mutex.__index = Mutex
+local mutex_t
+local raw_mutex_create
+local raw_mutex_destroy
+local raw_mutex_get
+local raw_mutex_release
 
 -- -----------------------------------------------------------------------------------------------------------------
 -- Windows Threads
@@ -125,6 +129,10 @@ if ffi.os == "Windows" then
 		static const int WAIT_FAILED = 0xFFFFFFFF;
 		static const int INFINITE = 0xFFFFFFFF;
 		
+		int CloseHandle(void*);
+		int GetExitCodeThread(void*,uint32_t*);
+		uint32_t WaitForSingleObject(void*, uint32_t);
+		
 		typedef uint32_t (__stdcall *ThreadProc)(void*);
 		void* CreateThread(
 			void* lpThreadAttributes,
@@ -135,9 +143,9 @@ if ffi.os == "Windows" then
 			uint64_t* lpThreadId
 		);
 		int TerminateThread(void*, uint32_t);
-		int CloseHandle(void*);
-		int GetExitCodeThread(void*,uint32_t*);
-		uint32_t WaitForSingleObject(void*, uint32_t);
+		
+		void* CreateMutexA(void*, int, const char*);
+		int ReleaseMutex(void*);
 		
 		uint32_t GetLastError();
 		uint32_t FormatMessage(
@@ -150,6 +158,15 @@ if ffi.os == "Windows" then
 			va_list *Arguments
 		);
 	]]
+	
+	thread_t = ffi.typeof[[struct {
+		lua_State* state;
+		void* thread;
+	}]]
+	
+	mutex_t = ffi.typeof[[struct {
+		void* mutex;
+	}]]
 	
 	local function error_win(lvl)
 		local errcode = C.GetLastError()
@@ -206,6 +223,42 @@ if ffi.os == "Windows" then
 		else
 			error_win(3)
 		end
+	end
+	
+	raw_mutex_create = function()
+		return ffi.new(mutex_t, C.CreateMutexA(nil, false, nil))
+	end
+	
+	raw_mutex_destroy = function(m)
+		if m.mutex ~= nil then
+			error_check(C.CloseHandle(m.mutex))
+			m.mutex = nil
+		end
+	end
+	
+	raw_mutex_get = function(m, timeout)
+		assert(m ~= nil)
+		if m.mutex == nil then error("invalid mutex",3) end
+		if timeout then
+			timeout = timeout*1000
+		else
+			timeout = C.INFINITE
+		end
+		
+		local r = C.WaitForSingleObject(m.mutex, timeout*1000)
+		if r == C.WAIT_OBJECT_0 or r == C.WAIT_ABANDONED then
+			return true
+		elseif r == C.WAIT_TIMEOUT then
+			return false
+		else
+			error_win(3)
+		end
+	end
+	
+	raw_mutex_release = function(m)
+		assert(m ~= nil)
+		if m.mutex == nil then error("invalid mutex",3) end
+		error_check(C.ReleaseMutex(m.mutex))
 	end
 end
 
@@ -300,8 +353,37 @@ thread_t = ffi.metatype(thread_t, Thread)
 -- -----------------------------------------------------------------------------------------------------------------
 -- Mutex API
 
+--- Creates a mutex
+function Mutex:__new()
+	return raw_mutex_create()
+end
+
+--- Trys to lock the mutex. If the mutex is already locked, it blocks
+-- for timeout seconds.
+-- @param timeout Time to wait for the mutex to become unlocked. nil = wait forever,
+-- 0 = do not block
+function Mutex:lock(timeout)
+	return raw_mutex_get(self, timeout)
+end
+
+--- Unlocks the mutex. If the current thread is not the owner, throws an error
+function Mutex:unlock()
+	raw_mutex_release(self)
+end
+
+--- Destroys the mutex.
+function Mutex:destroy()
+	raw_mutex_destroy(self)
+end
+Mutex.__gc = Mutex
+
+mutex_t = ffi.metatype(mutex_t, Mutex)
+
 -- -----------------------------------------------------------------------------------------------------------------
 
 Threading.Thread = thread_t
+Threading.Mutex = mutex_t
+Threading.ThreadP = ffi.typeof("$*",thread_t)
+Threading.MutexP = ffi.typeof("$*",mutex_t)
 
 return Threading
