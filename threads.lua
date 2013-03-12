@@ -215,7 +215,7 @@ if ffi.os == "Windows" then
 			timeout = C.INFINITE
 		end
 		
-		local r = C.WaitForSingleObject(t, timeout*1000)
+		local r = C.WaitForSingleObject(t, timeout)
 		if r == C.WAIT_OBJECT_0 or r == C.WAIT_ABANDONED then
 			return true
 		elseif r == C.WAIT_TIMEOUT then
@@ -245,7 +245,7 @@ if ffi.os == "Windows" then
 			timeout = C.INFINITE
 		end
 		
-		local r = C.WaitForSingleObject(m.mutex, timeout*1000)
+		local r = C.WaitForSingleObject(m.mutex, timeout)
 		if r == C.WAIT_OBJECT_0 or r == C.WAIT_ABANDONED then
 			return true
 		elseif r == C.WAIT_TIMEOUT then
