@@ -1,9 +1,9 @@
 
 local ffi = require "ffi"
-local Threading = require "threads"
+local Thread = require "jitthreads.thread"
 
 local function testThread(c, f, ...)
-	local thread = Threading.Thread(f, ...)
+	local thread = Thread(f, ...)
 	local ok, err = thread:join()
 	if ok then
 		print("Thread "..c.." ran successfully")

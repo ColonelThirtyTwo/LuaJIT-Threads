@@ -1,11 +1,12 @@
 
 local ffi = require "ffi"
-local Threading = require "threads"
+local Thread = require "jitthreads.thread"
+local Mutex = require "jitthreads.mutex"
 
 local function threadMain(threadid, m)
 	local ffi = require "ffi"
-	local Threading = require "threads"
-	m = ffi.cast(Threading.MutexP, m)
+	local Mutex = require "jitthreads.mutex"
+	m = ffi.cast(ffi.typeof("$*",Mutex), m)
 	
 	for i=1,20 do
 		m:lock()
@@ -14,10 +15,10 @@ local function threadMain(threadid, m)
 	end
 end
 
-local mutex = Threading.Mutex()
+local mutex = Mutex()
 local threads = {}
 for i=1,3 do
-	threads[i] = Threading.Thread(threadMain, i, mutex)
+	threads[i] = Thread(threadMain, i, mutex)
 end
 
 for i=#threads,1,-1 do
