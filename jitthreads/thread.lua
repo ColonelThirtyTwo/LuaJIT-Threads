@@ -155,12 +155,12 @@ Thread.__gc = Thread.destroy
 --- Waits for the thread to terminate, or after the timeout has passed
 -- @param timeout Number of seconds to wait. nil = no timeout
 -- @return True if the thread exited successfully, false and nil
---         if the function returned due to timeout, and
+--         if the function returned due to timeout, or
 --         false and a string error message if the thread terminated
 --         due to an error.
 function Thread:join(timeout)
 	if self.thread == nil then error("invalid thread",2) end
-	if abstractions.thread_join(self.thread) then
+	if abstractions.thread_join(self.thread, timeout) then
 		local r = C.lua_tointeger(self.state, -1)
 		if r ~= 0 then
 			local len_b = int_b()
@@ -169,7 +169,7 @@ function Thread:join(timeout)
 		end
 		return true
 	else
-		return false, Threading.TIMEOUT
+		return false
 	end
 end
 

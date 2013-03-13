@@ -15,6 +15,8 @@ local function threadMain(threadid, m)
 	end
 end
 
+print("Each thread will try to aquire the mutex 20 times.")
+
 local mutex = Mutex()
 local threads = {}
 for i=1,3 do
